@@ -1,0 +1,310 @@
+import tensorflow as tf
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+import cv2
+import keras
+import import_ipynb
+import random 
+from tensorflow.keras.losses import MeanSquaredError
+from tensorflow.keras import layers, models, Input, Model
+from tensorflow.keras.layers import Flatten, Dense, GlobalAveragePooling2D
+from tensorflow.keras.preprocessing.image import ImageDataGenerator, load_img, img_to_array
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras import backend as K
+from PIL import Image
+from sklearn.utils import shuffle
+from utils_notebook import redimensionner_images,afficher_images_reconstruites, charger_images_sans_labels, charger_les_donnees, data_augmentation
+from sklearn.model_selection import train_test_split  # Pour la division train/validation
+from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, Flatten, Dense, Lambda, BatchNormalization
+from tensorflow.keras.applications import VGG16
+from sklearn.model_selection import train_test_split
+from sklearn.decomposition import PCA
+
+
+# 1. Configuration des chemins et paramètres
+test_dir = r"C:\Users\sauvi\Desktop\Notebooks Python\notebooks\PMD\donnees\test"
+
+
+og_dir = r"D:\Lucie\Insa Toulouse\4A\Projet\petit"
+train_dir = r"D:\Lucie\Insa Toulouse\4A\Projet\petit_modifiees"
+
+size_image_x=120
+size_image_y=120
+input_shape = (size_image_x, size_image_y, 1)
+
+
+###### Chargement des données ######                            -------------------------------------> A refaire !!
+
+
+#####################################
+###### Visualisation images originales et modifiées ######      -------------------------------------> Utile ? ou à adapter ?
+
+def afficher_donnees_avec_labels2(pairs1, pairs2, n_paires):
+    fig, axes = plt.subplots(n_paires, 2, figsize=(8, 2 * n_paires))
+    
+    for i in range(n_paires):
+        image_1 = pairs1[i]  # Image originale
+        image_2 = pairs2[i]  # Image modifiée
+        label = labels_pairs[i]  # Label de la paire (1 = similaire, 0 = différent)
+        
+        # Affichage des images
+        axes[i, 0].imshow(image_1)  
+        axes[i, 0].axis("off")
+        axes[i, 0].set_title("Image originale")
+
+        axes[i, 1].imshow(image_2)  
+        axes[i, 1].axis("off")
+        axes[i, 1].set_title("Image modifiée ")
+    print(image_1.shape)
+    print(image_2.shape)
+    plt.tight_layout()
+    plt.show()
+
+afficher_donnees_avec_labels2(train_images_originales, train_images_modifiees, n_paires=5)
+
+
+###### Autoencodeur ######
+# Définir l'architecture de l'autoencodeur
+inputs = layers.Input(shape=(size_image_y, size_image_x, 1))  # Entrée avec les bonnes dimensions
+
+# Charger le modèle VGG16 pour la perte perceptuelle
+vgg = VGG16(include_top=False, weights='imagenet', input_shape=(size_image_y, size_image_x, 3))
+vgg.trainable = False
+
+"""
+# Fonction pour calculer la perte perceptuelle
+def perceptual_loss(y_true, y_pred):
+    y_true_resized = tf.image.resize(y_true, (size_image_y, size_image_x))
+    y_pred_resized = tf.image.resize(y_pred, (size_image_y, size_image_x))
+    
+    y_true_resized = tf.reduce_mean(y_true_resized, axis=-1, keepdims=True)
+    y_pred_resized = tf.reduce_mean(y_pred_resized, axis=-1, keepdims=True)
+    # Convertir les images en RGB (si elles sont en niveaux de gris)
+    y_true_3c = tf.image.grayscale_to_rgb(y_true_resized)
+    y_pred_3c = tf.image.grayscale_to_rgb(y_pred_resized)
+    
+    # Passer les images dans le modèle VGG16 pour obtenir les caractéristiques
+    y_true_features = vgg(y_true_3c)
+    y_pred_features = vgg(y_pred_3c)
+    
+    # Retourner la différence entre les caractéristiques
+    return tf.reduce_mean(tf.square(y_true_features - y_pred_features))
+
+# Combiner perceptual_loss et MSE
+def hybrid_loss(y_true, y_pred):
+    perceptual = perceptual_loss(y_true, y_pred)
+    mse = tf.reduce_mean(tf.square(y_true - y_pred))
+    return perceptual + mse
+
+# 5. Perte contrastive
+def contrastive_loss(y_true, y_pred, margin=1):
+    return K.mean(
+        y_true * K.square(y_pred) +
+        (1 - y_true) * K.square(K.maximum(margin - y_pred, 0))
+    )
+"""
+latent_dim = 10
+
+# Encoder
+inputs = keras.Input(shape=(size_image_y, size_image_x, 1))  # Entrée avec les bonnes dimensions
+x = layers.Conv2D(8, (3,3), activation='relu', padding='same')(inputs)
+#layers.BatchNormalization(),
+x = layers.MaxPooling2D((2,2), padding='same')(x)
+#x = layers.Dropout(0.2)(x)  # Ajout de Dropout pour éviter le surapprentissage
+x = layers.Conv2D(16, (3,3), activation='relu', padding='same')(x)
+#layers.BatchNormalization(),
+x = layers.MaxPooling2D((2,2), padding='same')(x)
+#x = layers.Dropout(0.2)(x)
+x = layers.Conv2D(32, (3,3), activation='relu', padding='same')(x)
+#layers.BatchNormalization(),
+x = layers.MaxPooling2D((2,2), padding='same')(x)
+z = layers.Dropout(0.5)(x)
+"""
+x = layers.Conv2D(256, (3,3), activation='relu', padding='same')(x)
+#layers.BatchNormalization(),
+x = layers.MaxPooling2D((2,2), padding='same')(x)
+x = layers.Dropout(0.5)(x)
+"""
+"""
+x = layers.Flatten()(x)
+x = layers.Dense(16, activation = "relu")(x)
+z = layers.Dense(latent_dim)(x)
+"""
+encoder = keras.Model(inputs, z, name ="encoder")
+encoder.summary()
+
+#bottleneck
+#x = layers.Conv2D(256, (3,3), activation='relu', padding='same')(x)
+#x = layers.Conv2D(256, (3,3), activation='relu', padding='same')(x)
+"""
+# Decoder
+decod = keras.Input(shape=(latent_dim,))  # Entrée avec les bonnes dimensions
+x = layers.Dense(32 * 60 * 128, activation = "relu")(decod)
+x = layers.Reshape((32, 60, 128))(x)
+"""
+decod=keras.Input(shape=(16, 16, 32))
+"""
+x = layers.Conv2DTranspose(256, (3,3), activation='relu', padding='same')(x)
+x = layers.UpSampling2D((2,2))(x)
+#layers.BatchNormalization(),
+
+"""
+x = layers.Conv2DTranspose(32, (3,3), activation='relu', padding='same')(decod)
+#layers.BatchNormalization(),
+x = layers.UpSampling2D((2,2))(x)
+x = layers.Conv2DTranspose(16, (3,3), activation='relu', padding='same')(x)
+#layers.BatchNormalization(),
+x = layers.UpSampling2D((2,2))(x)
+x = layers.Conv2DTranspose(8, (3,3), activation='relu', padding='same')(x)
+x = layers.UpSampling2D((2,2))(x)
+#layers.BatchNormalization(),
+outputs = layers.Conv2D(1, (3, 3), activation='sigmoid', padding='same')(x) # Sortie : Une image de même taille que l'entrée
+
+decoder = keras.Model(decod, outputs, name = "decoder")
+decoder.summary()
+
+#inputs = keras.Input(shape=(size_image_y, size_image_x, 3))
+
+latents = encoder(inputs)
+outputs = decoder(latents)
+
+ae = keras.Model(inputs, outputs, name = "ae")
+ae.summary
+
+# Compiler le modèle
+#ae.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.05), loss='mse', metrics=['accuracy'])
+ae.compile(optimizer='adam', loss='mse', metrics=['accuracy'])
+
+early_stopping = EarlyStopping(monitor='val_loss', patience=0.1, restore_best_weights=True)
+reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=0.1, min_lr=0.1)
+
+#train the model
+callbacks = [keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=0.1, min_lr=0.1),
+             keras.callbacks.TensorBoard(histogram_freq=1), keras.callbacks.EarlyStopping(monitor='val_loss', patience=0.1, restore_best_weights=True)
+]
+
+print(f"✅ Train modifiées: {train_images_modifiees.shape}, Train originales: {train_images_originales.shape}")
+
+# Entraîner le modèle sur les paires d'images
+ae.fit(
+    train_images_modifiees, train_images_originales,  # Entrée modifiée et sortie originale
+    epochs=10,
+    batch_size=16,
+    verbose = 1,
+    validation_split=0.8,  # Vous pouvez aussi ajouter une validation
+    #validation_data = (train_images_modifiees, train_images_originales),
+    callbacks = callbacks
+)
+
+ae.save("ae_model.keras")
+
+#######################################
+###### Visualisation résultat autoencodeur ######
+def afficher_reconstruction_autoencodeur(train_dir, og_dir, size_image_x, size_image_y, autoencoder):
+    # Charger une image modifiée et une image originale pour vérifier la lecture
+    img_modifiee_path = os.path.join(train_dir, "classe1", os.listdir(os.path.join(train_dir, "classe1"))[0])  # Exemple
+    img_originale_path = os.path.join(og_dir, "classe1", os.listdir(os.path.join(og_dir, "classe1"))[0])  # Exemple
+
+    # Chargement des images
+    img_modifiee = cv2.imread(img_modifiee_path)
+    img_modifiee = convert_to_grayscale(img_modifiee)
+    img_originale = cv2.imread(img_originale_path)
+    img_originale = convert_to_grayscale(img_originale)
+
+    if img_modifiee is None or img_originale is None:
+        print("⚠️ Une des images n'a pas été chargée correctement.")
+        return
+
+    # Redimensionnement et normalisation des images
+    img_modifiee_resized = cv2.resize(img_modifiee, (size_image_x, size_image_y)) / 255.0
+    img_originale_resized = cv2.resize(img_originale, (size_image_x, size_image_y)) / 255.0
+    print(f"✅ img_modifiee_resized: {img_modifiee_resized.shape}")
+    print(f"✅ img_originale_resized: {img_originale_resized.shape}")
+
+    # Reconstruction via l'autoencodeur
+    img_reconstruite = autoencoder.predict(np.expand_dims(img_modifiee_resized, axis=0))[0]
+    
+    # Recaler l'image reconstruite à la plage [0, 255] et convertir en uint8
+    img_reconstruite_non_normalisee = np.clip(img_reconstruite * 255, 0, 255).astype(np.uint8)
+    print(f"✅ img_reconstruite_non_normalisee: {img_reconstruite_non_normalisee.shape}")
+    
+    # Affichage des images
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+
+    # Image modifiée (avant normalisation)
+    axes[0].imshow(cv2.cvtColor(img_modifiee, cv2.COLOR_BGR2RGB))
+    axes[0].set_title("Image modifiée")
+    axes[0].axis("off")
+
+    # Image originale (avant normalisation)
+    axes[1].imshow(cv2.cvtColor(img_originale, cv2.COLOR_BGR2RGB))
+    axes[1].set_title("Image originale")
+    axes[1].axis("off")
+
+    # Image reconstruite (non normalisée)
+    axes[2].imshow(cv2.cvtColor(img_reconstruite_non_normalisee, cv2.COLOR_BGR2RGB))
+    axes[2].set_title("Image reconstruite (non normalisée)")
+    axes[2].axis("off")
+
+    plt.show()
+
+afficher_reconstruction_autoencodeur(train_dir, og_dir, size_image_x, size_image_y, ae)
+
+
+#################################
+###### Visualisation de l'encodeur ######
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.decomposition import PCA
+
+# Sélectionner une image de test
+idx = 0  # Indice d'une image test
+image_test = np.expand_dims(train_images_modifiees[idx], axis=0)  # Ajouter batch dim
+
+# Passer l'image dans l'encodeur pour récupérer la représentation latente
+latent_representation = encoder.predict(image_test)
+
+# Si la sortie est un tenseur 3D (H, W, C), afficher comme une carte de caractéristiques
+if len(latent_representation.shape) == 4:
+    latent_representation = np.squeeze(latent_representation)  # Supprimer la dimension batch
+    num_filters = latent_representation.shape[-1]  # Nombre de cartes
+
+    num_cols = 3  # Affichage avec 3 images par ligne (1 image originale + 2 features)
+    num_rows = int(np.ceil((min(num_filters, 8) + 1) / num_cols))  # Nb de lignes
+
+    fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 5, num_rows * 5))
+
+    # Afficher l'image originale en haut à gauche
+    axes[0, 0].imshow(train_images_modifiees[idx])  
+    axes[0, 0].axis("off")
+    axes[0, 0].set_title("Image d'origine")
+
+    # Affichage des cartes latentes
+    for i in range(min(num_filters, 8)):  # Max 8 cartes pour éviter surcharge
+        row, col = divmod(i + 1, num_cols)  # Décalage de 1 car image originale est en (0,0)
+        axes[row, col].imshow(latent_representation[:, :, i], cmap="viridis")  
+        axes[row, col].axis("off")
+        axes[row, col].set_title(f"Feature {i}")
+
+    # Supprimer les cases vides si besoin
+    for i in range(min(num_filters, 8) + 1, num_rows * num_cols):
+        fig.delaxes(axes[i // num_cols, i % num_cols])
+
+    plt.tight_layout()
+    plt.show()
+
+# Si la sortie est un vecteur 1D, appliquer une réduction de dimension
+elif len(latent_representation.shape) == 2:
+    latent_2D = PCA(n_components=2).fit_transform(latent_representation)  
+    plt.figure(figsize=(6, 6))
+    plt.scatter(latent_2D[:, 0], latent_2D[:, 1], c="blue", alpha=0.7)
+    plt.title("Représentation bottleneck (PCA)")
+    plt.xlabel("Composante 1")
+    plt.ylabel("Composante 2")
+    plt.grid()
+    plt.show()
+
+
+#################################
+###### Test de validation des performances ######                  -------------------------------------> A Faire !!
