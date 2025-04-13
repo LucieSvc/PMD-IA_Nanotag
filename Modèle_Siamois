@@ -1,0 +1,671 @@
+import tensorflow as tf
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+import cv2
+import keras
+import import_ipynb
+import random 
+import math
+from tensorflow.keras.losses import MeanSquaredError
+from tensorflow.keras import layers, models, Input, Model
+from tensorflow.keras.layers import Flatten, Dense, GlobalAveragePooling2D
+from tensorflow.keras.preprocessing.image import ImageDataGenerator, load_img, img_to_array
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras import backend as K
+from PIL import Image
+from sklearn.utils import shuffle
+from utils_notebook import redimensionner_images,afficher_images_reconstruites, charger_images_sans_labels, charger_les_donnees, data_augmentation
+from sklearn.model_selection import train_test_split  # Pour la division train/validation
+from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, Flatten, Dense, Lambda, BatchNormalization
+from tensorflow.keras.applications import VGG16
+from sklearn.model_selection import train_test_split
+from sklearn.decomposition import PCA
+
+
+# 1. Configuration des chemins et paramètres
+test_dir = r"C:\Users\sauvi\Desktop\Notebooks Python\notebooks\PMD\donnees\test"
+
+
+og_dir = r"D:\Lucie\Insa Toulouse\4A\Projet\petit"
+train_dir = r"D:\Lucie\Insa Toulouse\4A\Projet\petit_modifiees"
+
+size_image_x=120
+size_image_y=120
+input_shape = (size_image_x, size_image_y, 1)
+
+
+
+# Fonction pour charger les images locales
+def load_local_images(dataset_path, image_size=(256, 256)):
+    images = []
+    labels = []
+    class_names = sorted(os.listdir(dataset_path))  # Liste des classes
+
+    for label, class_name in enumerate(class_names):
+        class_dir = os.path.join(dataset_path, class_name)
+        if not os.path.isdir(class_dir):
+            continue  # Ignorer les fichiers non répertoires
+
+        for img_name in os.listdir(class_dir):
+            img_path = os.path.join(class_dir, img_name)
+            
+            # Charger et convertir l'image
+            img = load_img(img_path, target_size=image_size, color_mode="grayscale")  
+            img_array = img_to_array(img) / 255.0  # Normalisation
+            images.append(img_array)
+            labels.append(label)
+
+    return np.array(images), np.array(labels)
+    
+def create_pairs(images, labels):
+    imagePairs = []
+    labelPairs = []
+
+    num_classes = len(np.unique(labels))
+    idx = [np.where(labels == i)[0] for i in range(num_classes)]
+
+    for ind in range(len(images)):
+        currImage = images[ind]
+        label = labels[ind]
+
+        # Trouver une autre image de la même classe
+        indB = np.random.choice(idx[label])
+        posImage = images[indB]
+        imagePairs.append([currImage, posImage])
+        labelPairs.append(1)  # Même classe -> 1
+
+        # Trouver une image d'une autre classe
+        neg_idx = np.where(labels != label)[0]
+        negImage = images[np.random.choice(neg_idx)]
+        imagePairs.append([currImage, negImage])
+        labelPairs.append(0)  # Classe différente -> 0
+
+    return np.array(imagePairs, dtype=np.float32), np.array(labelPairs, dtype=np.int32)
+
+x_test, y_test = load_local_images(train_dir)
+#x_test = np.expand_dims(x_test, axis=-1)
+pairs, labels_pairs = create_pairs(x_test, y_test)
+print(f"Nombre total de paires générées : {len(pairs)}")
+
+
+
+# Fonction pour charger les images locales
+def load_local_images(dataset_path, image_size=(256, 256)):
+    images = []
+    labels = []
+    class_names = sorted(os.listdir(dataset_path))  # Liste des classes
+
+    for label, class_name in enumerate(class_names):
+        class_dir = os.path.join(dataset_path, class_name)
+        if not os.path.isdir(class_dir):
+            continue  # Ignorer les fichiers non répertoires
+
+        for img_name in os.listdir(class_dir):
+            img_path = os.path.join(class_dir, img_name)
+            
+            # Charger et convertir l'image
+            img = load_img(img_path, target_size=image_size, color_mode="grayscale")  
+            img_array = img_to_array(img) / 255.0  # Normalisation
+            images.append(img_array)
+            labels.append(label)
+
+    return np.array(images), np.array(labels)
+    
+def create_pairs(images, labels):
+    imagePairs = []
+    labelPairs = []
+
+    num_classes = len(np.unique(labels))
+    idx = [np.where(labels == i)[0] for i in range(num_classes)]
+
+    for ind in range(len(images)):
+        currImage = images[ind]
+        label = labels[ind]
+
+        # Trouver une autre image de la même classe
+        indB = np.random.choice(idx[label])
+        posImage = images[indB]
+        imagePairs.append([currImage, posImage])
+        labelPairs.append(1)  # Même classe -> 1
+
+        # Trouver une image d'une autre classe
+        neg_idx = np.where(labels != label)[0]
+        negImage = images[np.random.choice(neg_idx)]
+        imagePairs.append([currImage, negImage])
+        labelPairs.append(0)  # Classe différente -> 0
+
+    return np.array(imagePairs, dtype=np.float32), np.array(labelPairs, dtype=np.int32)
+
+x_test, y_test = load_local_images(train_dir)
+#x_test = np.expand_dims(x_test, axis=-1)
+pairs, labels_pairs = create_pairs(x_test, y_test)
+print(f"Nombre total de paires générées : {len(pairs)}")
+
+
+
+########################
+###### Modèle Siamois ######
+# 4. Création du modèle Siamese
+input_shape = (size_image_y, size_image_x, 1)
+
+import tensorflow.keras.backend as K
+def contrastive_loss(y_true, y_pred):
+    margin = 1.0
+    return K.mean(y_true * K.square(y_pred) + (1 - y_true) * K.square(K.maximum(margin - y_pred, 0)))
+
+
+def create_siamese_model(input_shape):
+    """Crée et retourne le modèle Siamese."""
+    
+    input_img = Input(shape=input_shape)
+    
+    x = layers.Conv2D(8, (3, 3), activation='relu', padding='same')(input_img)
+    x = BatchNormalization()(x)
+    x = layers.MaxPooling2D((2, 2))(x)
+    x = layers.Dropout(0.2)(x)
+    x = layers.Conv2D(16, (3, 3), activation='relu', padding='same')(x)
+    x = BatchNormalization()(x)
+    x = layers.MaxPooling2D((2, 2))(x)
+    x = layers.Dropout(0.2)(x)
+    """
+    x = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(x)
+    x = BatchNormalization()(x)
+    x = layers.MaxPooling2D((2, 2))(x)
+"""
+    output = keras.layers.GlobalAveragePooling2D()(x)  # Reduce spatial dimensions
+    #output = layers.Flatten()(output)
+    output = keras.layers.Dense(400, activation="sigmoid")(output)
+    """
+    
+    x = layers.Flatten()(x)
+    #x = layers.Dense(64, activation='relu')(x)  # Réduction de la taille du vecteur
+    x = layers.Dense(128, activation='relu')(x)  # Augmente légèrement la complexité
+    """
+    output = layers.Dropout(0.3)(output)
+    
+    siamese = Model(input_img, output, name="siamese")
+    siamese.summary()
+    
+    input_img_1 = Input(shape=input_shape)
+    input_img_2 = Input(shape=input_shape)
+
+    encoded_1 = siamese(input_img_1)
+
+    encoded_2 = siamese(input_img_2)
+
+    #distance = layers.Lambda(lambda tensors: tf.abs(tensors[0] - tensors[1]))([encoded_1, encoded_2])
+    distance = layers.Lambda(lambda tensors: tf.sqrt(tf.reduce_sum(tf.square(tensors[0] - tensors[1]), axis=1, keepdims=True)))([encoded_1, encoded_2])
+    output = layers.Dense(1, activation='sigmoid')(distance)
+
+    siamese_model = Model(inputs=[input_img_1, input_img_2], outputs=output)
+    return siamese_model
+
+siamese_model = create_siamese_model(input_shape)
+
+# 6. Compilation et callbacks
+#siamese_model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.1), loss='binary_crossentropy', metrics=['accuracy'])
+#siamese_model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+#siamese_model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001), loss=contrastive_loss, metrics=['accuracy'])
+siamese_model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001), loss='categorical_crossentropy', metrics=['accuracy'])
+# Séparer les paires en deux entrées distinctes
+X1 = pairs[:, 0]  # Première image de la paire
+X2 = pairs[:, 1]  # Deuxième image de la paire
+y = labels_pairs   # Labels (1 si similaires, 0 sinon)
+
+# Création des indices pour les paires
+indices = np.arange(len(X1))  # Liste d'indices correspondant aux paires
+
+# Division des indices pour garder les paires intactes
+indices_train, indices_val = train_test_split(indices, test_size=0.2, random_state=42)
+
+# Application de la division des indices à X1, X2, et y
+X1_train, X2_train, y_train = X1[indices_train], X2[indices_train], y[indices_train]
+X1_val, X2_val, y_val = X1[indices_val], X2[indices_val], y[indices_val]
+
+# Redimensionner les images comme avant
+X1_train = np.array([cv2.resize(x, (size_image_x, size_image_y)) for x in X1_train], dtype=np.float32)
+X2_train = np.array([cv2.resize(x, (size_image_x, size_image_y)) for x in X2_train], dtype=np.float32)
+
+X1_val = np.array([cv2.resize(x, (size_image_x, size_image_y)) for x in X1_val], dtype=np.float32)
+X2_val = np.array([cv2.resize(x, (size_image_x, size_image_y)) for x in X2_val], dtype=np.float32)
+
+# Reshaper les labels
+y_train = y_train.reshape(-1, 1)
+y_val = y_val.reshape(-1, 1)
+
+# Vérification de la cohérence des paires
+assert len(X1_train) == len(X2_train) == len(y_train)
+assert len(X1_val) == len(X2_val) == len(y_val)
+
+def convert_to_gray(images):
+    gray_images = []
+    for img in images:
+        if img is None:
+            raise ValueError("Erreur : Une image n'a pas été chargée correctement.")
+
+        # Vérifier si l'image est déjà en grayscale
+        if len(img.shape) == 2:  # Image au format (H, W)
+            img = np.expand_dims(img, axis=-1)  # Ajouter une dimension (H, W, 1)
+        elif img.shape[-1] == 3:  # Image au format (H, W, 3) (RGB)
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)  # Convertir en grayscale
+            img = np.expand_dims(img, axis=-1)  # Ajouter une dimension (H, W, 1)
+
+        gray_images.append(img)
+
+    return np.array(gray_images)
+
+# Appliquer la conversion sur les ensembles d'entraînement et de validation
+X1_train = convert_to_gray(X1_train)
+X2_train = convert_to_gray(X2_train)
+X1_val = convert_to_gray(X1_val)
+X2_val = convert_to_gray(X2_val)
+
+# Entraîner le modèle siamois
+siamese_model.fit([X1_train, X2_train], y_train, 
+                  validation_data=([X1_val, X2_val], y_val), 
+                  epochs=10, 
+                  batch_size=16, 
+                  #callbacks=[early_stopping, reduce_lr]  # Ajout du callback ReduceLROnPlateau
+)
+
+
+#afficher_reconstruction_autoencodeur(train_dir, og_dir, size_image_x, size_image_y, siamese_model)
+
+
+
+##################################
+### test amélioration -> voir avant couche dense
+def visualiser_paire(idx, label):
+    """Affiche la comparaison pour une paire donnée (idx) dans le jeu de validation."""
+    
+    image1 = np.expand_dims(X1_val[idx], axis=0)  # Ajouter batch dim
+    image2 = np.expand_dims(X2_val[idx], axis=0)
+
+    # Récupérer l'encodeur Siamese
+    encoder_siamois = siamese_model.get_layer("siamese")  
+
+    # 🔹 EXTRACTION DES REPRESENTATIONS LATENTES (Dense)
+    latent1 = encoder_siamois.predict(image1)  
+    latent2 = encoder_siamois.predict(image2)  
+
+    # 🔹 Trouver la dernière couche 2D avant GlobalAveragePooling2D
+    last_conv_layer = None
+    for layer in reversed(encoder_siamois.layers):
+        if isinstance(layer, layers.Conv2D) or isinstance(layer, layers.MaxPooling2D):
+            last_conv_layer = layer
+            break
+
+    if last_conv_layer is None:
+        raise ValueError("Aucune couche 2D trouvée avant GlobalAveragePooling2D ! Vérifiez l'architecture.")
+
+    model_intermediaire = Model(inputs=encoder_siamois.input, outputs=last_conv_layer.output)
+    
+    feature_map1 = model_intermediaire.predict(image1)  # Features avant Dense (Image 1)
+    feature_map2 = model_intermediaire.predict(image2)  # Features avant Dense (Image 2)
+
+    # 🔹 Normalisation des images pour imshow ([0,255] → [0,1])
+    image1_display = np.clip(X1_val[idx] / 255.0, 0, 1)
+    image2_display = np.clip(X2_val[idx] / 255.0, 0, 1)
+
+    # Création de la figure
+    fig, axes = plt.subplots(3, 3, figsize=(12, 10))
+
+    # 🔹 Affichage des images d'origine
+    axes[0, 0].imshow(image1_display)
+    axes[0, 0].axis("off")
+    axes[0, 0].set_title("Image 1 (Originale)")
+
+    axes[0, 1].imshow(image2_display)
+    axes[0, 1].axis("off")
+    axes[0, 1].set_title("Image 2 (Comparée)")
+
+    # 🔹 Vérification de la variance avant PCA
+    if latent1.shape[1] > 2:
+        if np.var(latent1) > 0 and np.var(latent2) > 0:
+            pca = PCA(n_components=2)
+            latent_pca = pca.fit_transform(np.vstack([latent1, latent2]))
+
+            axes[1, 0].scatter(latent_pca[0, 0], latent_pca[0, 1], c="blue", label="Image 1")
+            axes[1, 0].scatter(latent_pca[1, 0], latent_pca[1, 1], c="red", label="Image 2")
+            axes[1, 0].legend()
+            axes[1, 0].set_title("Représentation Latente (PCA)")
+        else:
+            axes[1, 0].text(0.5, 0.5, "Variance nulle (PCA impossible)", ha="center", va="center")
+            axes[1, 0].axis("off")
+    else:
+        axes[1, 0].plot(latent1.flatten(), label="Image 1", color="blue")
+        axes[1, 0].plot(latent2.flatten(), label="Image 2", color="red")
+        axes[1, 0].legend()
+        axes[1, 0].set_title("Représentation Latente (Vecteur)")
+
+    # 🔹 Affichage de la différence absolue entre les représentations
+    difference = np.abs(latent1 - latent2)
+    axes[1, 1].bar(range(len(difference.flatten())), difference.flatten(), color="purple")
+    axes[1, 1].set_title("Différence entre Représentations")
+
+    # 🔹 Affichage de la dernière couche 2D avant la Dense (Feature Maps)
+    mean_feature1 = np.mean(feature_map1[0], axis=-1)  # Moyenne des cartes de caractéristiques
+    mean_feature2 = np.mean(feature_map2[0], axis=-1)
+
+    axes[2, 0].imshow(mean_feature1, cmap="viridis")
+    axes[2, 0].set_title("Feature Map Image 1")
+    axes[2, 0].axis("off")
+
+    axes[2, 1].imshow(mean_feature2, cmap="viridis")
+    axes[2, 1].set_title("Feature Map Image 2")
+    axes[2, 1].axis("off")
+
+    # 🔹 Calcul et affichage de la similarité (sortie du modèle Siamese)
+    similarity_score = siamese_model.predict([image1, image2])[0, 0]
+    label_str = "Similaire" if label == 1 else "Différent"
+    
+    axes[0, 2].text(0.5, 0.6, f"Score de similarité: {similarity_score:.2f}", fontsize=14, ha="center", va="center")
+    axes[0, 2].text(0.5, 0.3, f"Label réel: {label_str}", fontsize=14, color="red", ha="center", va="center")
+    axes[0, 2].axis("off")
+
+    plt.tight_layout()
+    plt.show()
+    
+    
+for i in range (0,3) :
+    # Trouver tous les indices pour chaque catégorie
+    indices_positifs = np.where(y_val == 1)[0]  # Indices des paires similaires
+    indices_negatifs = np.where(y_val == 0)[0]  # Indices des paires différentes
+    
+    # Choisir un indice au hasard dans chaque catégorie
+    idx_positif = np.random.choice(indices_positifs)
+    idx_negatif = np.random.choice(indices_negatifs)
+    
+    print("🔹 Visualisation d'une paire SIMILAIRE (Label = 1)")
+    visualiser_paire(idx_positif, 1)
+    
+    print("🔹 Visualisation d'une paire DIFFÉRENTE (Label = 0)")
+    visualiser_paire(idx_negatif, 0)
+
+
+
+################################
+####### Chargement données de test ######
+
+# Dimensions pour le redimensionnement
+resize_width, resize_height = 480, 256
+
+def cropped_and_gray_image(img_path):
+    """Charge une image, détecte un cercle, recadre autour et la convertit en niveaux de gris."""
+    # Charger l'image
+    image0 = cv2.imread(img_path)
+
+    if image0 is None:
+        print(f"Erreur : Impossible de charger {img_path}")
+        return None  # Retourner None au lieu de 'continue'
+
+    # Redimensionner l'image à 480x256 pour la détection du cercle
+    image = cv2.resize(image0, (resize_width, resize_height))
+
+    # Convertir en niveaux de gris
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Détecter les cercles avec HoughCircles
+    circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, dp=1.2, minDist=300, param1=100, param2=10, minRadius=100, maxRadius=200)
+
+    # Dimensions de l'image redimensionnée
+    height, width = gray.shape
+    center_x, center_y = width // 2, height // 2
+
+    # Sélectionner le cercle le plus proche du centre, mais uniquement s'il est entièrement visible
+    best_circle = None
+    min_distance = float("inf")
+
+    if circles is not None:
+        for circle in circles[0, :]:
+            x, y, r = circle
+
+            # Vérifier que le cercle est entièrement contenu dans l'image
+            if (x - r >= 0 and y - r >= 0 and x + r <= width and y + r <= height):
+                distance_to_center = np.sqrt((x - center_x) ** 2 + (y - center_y) ** 2)
+                if distance_to_center < min_distance:
+                    min_distance = distance_to_center
+                    best_circle = circle
+    
+    # Si un cercle a été détecté et validé
+    if best_circle is not None:
+        x, y, r = best_circle  # Coordonnées du cercle sur l'image redimensionnée
+
+        # Mise à l'échelle des coordonnées et du rayon
+        scale_x = image0.shape[1] / resize_width
+        scale_y = image0.shape[0] / resize_height
+        x = int(x * scale_x)
+        y = int(y * scale_y)
+        r = int(r * min(scale_x, scale_y))  # Adapter le rayon
+
+        # Définir la taille du carré basé sur le diamètre
+        side = 2 * r  
+
+        # Calculer les nouvelles coordonnées pour assurer un carré
+        x1, y1 = x - r, y - r
+        x2, y2 = x + r, y + r
+
+        # Vérifier que les coordonnées restent dans les limites de l'image
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(image0.shape[1], x2), min(image0.shape[0], y2)
+
+        # Recadrer l'image sur l'image originale
+        cropped_image = image0[y1:y2, x1:x2]
+
+        # Convertir en noir et blanc
+        cropped_gray = cv2.cvtColor(cropped_image, cv2.COLOR_BGR2GRAY)
+        return cropped_gray  # Retourner l'image recadrée et en niveaux de gris
+    else : 
+        print(f"Aucun cercle trouvé pour: {img_path}")
+        return None
+
+def load_and_preprocess_test_images(load_dir, size_image_x, size_image_y):
+    """Charge, recadre et prétraite les images de test en niveaux de gris"""
+    test_images = []
+    valid_file_names = []  # Liste pour stocker les fichiers valides
+    test_image_files = [f for f in os.listdir(load_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+
+    for file in test_image_files:
+        img_path = os.path.join(load_dir, file)
+        try:
+            img = cropped_and_gray_image(img_path)  # Récupérer l'image recadrée
+            
+            if img is not None:  # Si le recadrage a réussi
+                img_resized = Image.fromarray(img).resize((size_image_x, size_image_y))
+                img_array = np.array(img_resized) / 255.0  # Normalisation [0,1]
+                test_images.append(img_array)
+                valid_file_names.append(file)  # Ajouter uniquement si l'image est valide
+            
+        except Exception as e:
+            print(f"❌ Erreur avec l'image {file}: {e}")
+
+    if len(test_images) == 0:
+        raise ValueError("❌ Aucune image de test chargée. Vérifiez le dossier des images de test.")
+
+    return np.array(test_images), valid_file_names  # Retourne les noms filtrés
+
+
+def load_and_preprocess_original_images(base_dir, size_image_x, size_image_y):
+    """Charge toutes les images des sous-dossiers de base_dir et les prétraite."""
+    images = []  # Liste pour stocker les images
+    image_files = []  # Liste pour stocker les noms de fichiers
+    base_files = [f for f in os.listdir(base_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+
+
+    # Explorer chaque sous-dossier (classe)
+    for class_name in os.listdir(base_dir):
+        class_path = os.path.join(base_dir, class_name)
+
+        # Vérifier que c'est bien un dossier avant de le parcourir
+        if os.path.isdir(class_path):  
+            for file_name in os.listdir(class_path):
+                file_path = os.path.join(class_path, file_name)
+
+                # Vérifier si c'est une image
+                if file_name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    try:
+                        # Charger l'image en niveaux de gris
+                        img = Image.open(file_path).convert("L")  # "L" = grayscale
+                        img_resized = img.resize((size_image_x, size_image_y))  # Redimensionner
+                        img_array = np.array(img_resized) / 255.0  # Normalisation [0,1]
+
+                        images.append(img_array)  # Ajouter à la liste
+                        image_files.append(file_path)  # Stocker le chemin du fichier
+                        
+                    except Exception as e:
+                        print(f"❌ Erreur avec l'image {file_name}: {e}")
+
+    # Vérifier que des images ont bien été chargées
+    if len(images) == 0:
+        raise ValueError("Aucune image originale chargée. Vérifiez le dossier des images originales.")
+
+    return np.array(images), image_files  # Conversion en numpy array après remplissage
+
+
+# Afficher la liste des fichiers dans og_dir
+print("Fichiers dans le dossier :", os.listdir(og_dir))
+
+# Chargement des images
+base_array, base_files = load_and_preprocess_original_images(og_dir, size_image_x, size_image_y)
+
+print(f"{len(base_array)} images originales chargées.")
+print("Fichiers chargés :", base_files)
+
+# 9. Évaluation sur les images de test
+test_images, test_image_files = load_and_preprocess_test_images(test_dir, size_image_x, size_image_y)
+print("Test modèle siamois chargé !")
+
+def show_images(images, file_names, title, cols=5):
+    num_images = len(images)
+    rows = math.ceil(num_images / cols)  # Calcul du nombre de lignes
+
+    plt.figure(figsize=(cols * 3, rows * 3))  # Taille ajustée
+    
+    for i, (image, file_name) in enumerate(zip(images, file_names)):  
+        plt.subplot(rows, cols, i + 1)
+        plt.imshow(image, cmap="gray")  # Affichage en niveaux de gris
+        plt.title(file_name, fontsize=8)  # Associer image et fichier
+        plt.axis("off")
+
+    plt.suptitle(title, fontsize=12)
+    plt.tight_layout()
+    plt.show()
+    
+# Afficher les images de test avec une grille plus lisible
+show_images(test_images, test_image_files, "Images de test prétraitées")
+
+
+####### Similarités modèles siamois (Conparaison image par image) ######
+name = []
+for filename in os.listdir(test_dir):
+    name.append(filename)
+def comparer_images(image1, image2):
+    """Compare deux images avec le modèle siamois et retourne un score de similarité."""
+    # Assurez-vous que l'image est bien un tableau NumPy avec la bonne forme
+    image1 = np.expand_dims(image1, axis=0)  # (1, hauteur, largeur, canaux)
+    image2 = np.expand_dims(image2, axis=0)  
+
+    # Vérification des dimensions avant d'envoyer au modèle
+    #print(f"✅ Forme image1 : {image1.shape}, image2 : {image2.shape}")
+
+    # Passage dans le modèle
+    try:
+        prediction = siamese_model.predict([image1, image2])
+        similarity_score = float(np.mean(prediction))
+        return similarity_score
+    except Exception as e:
+        print(f"❌ Erreur dans la prédiction : {e}")
+        return 0.0  # Retourner un score bas en cas d'erreur
+
+# Parcours des images test
+for file in test_image_files:
+    img_path = os.path.join(test_dir, file)
+    try:
+        # Charger l'image en niveaux de gris
+        image_test = Image.open(img_path).convert("L")  # Convertir en niveaux de gris
+        image_test = image_test.resize((size_image_x, size_image_y))  # Redimensionner
+        img_array = np.array(image_test, dtype=np.float32) / 255.0  # Normalisation
+        
+        # Ajouter une dimension de canal pour compatibilité modèle (hauteur, largeur, 1)
+        img_array = np.expand_dims(img_array, axis=-1)  
+
+        # Comparer avec chaque image originale
+        for i, img_orig in enumerate(base_array):
+            img_orig_exp = np.expand_dims(img_orig, axis=-1)  # S'assurer du bon format
+            similarity = comparer_images(img_orig_exp, img_array)
+
+            # Déterminer si la correspondance est vraie ou fausse
+            statut = "Vrai" if similarity > 0.6 else "Faux"
+            print(f"{file}: Similarité avec og {i+1} = {similarity:.4f} - {statut}")
+
+    except Exception as e:
+        print(f"❌ Erreur lors du chargement de l'image {file}: {e}")
+
+# Sauvegarde du modèle
+siamese_model.save("siamese_model.keras")
+print("✅ Modèle sauvegardé.")
+
+
+
+###########################
+####### Similarités modèles siamois (trouver meilleure correspondance) ######
+# Fonction pour calculer la meilleure correspondance avec les images de base
+
+## déja dans la cellule d'avant mais flemme de la run
+####### Similarités modèles siamois (Conparaison image par image) ######
+def comparer_images(image1, image2):
+    """Compare deux images avec le modèle siamois et retourne un score de similarité."""
+    # Assurez-vous que l'image est bien un tableau NumPy avec la bonne forme
+    image1 = np.expand_dims(image1, axis=0)  # (1, hauteur, largeur, canaux)
+    image2 = np.expand_dims(image2, axis=0)  
+
+    # Vérification des dimensions avant d'envoyer au modèle
+    #print(f"✅ Forme image1 : {image1.shape}, image2 : {image2.shape}")
+
+    # Passage dans le modèle
+    try:
+        prediction = siamese_model.predict([image1, image2])
+        similarity_score = float(np.mean(prediction))
+        return similarity_score
+    except Exception as e:
+        print(f"❌ Erreur dans la prédiction : {e}")
+        return 0.0  # Retourner un score bas en cas d'erreur
+
+        
+def trouver_meilleure_correspondance(test_image, base_array):
+    meilleure_similarite = 0
+    meilleure_classe = "Inconnue"
+    
+    # Comparer chaque image de base avec l'image de test
+    for i, img_orig in enumerate(base_array):
+        img_orig = np.expand_dims(img_orig, axis=-1)  # Adapter la dimension si besoin
+        
+        try:
+            # Calculer la similarité entre l'image de test et l'image d'origine
+            similarity_score = comparer_images(img_orig, test_image)
+        except Exception as e:
+            print(f"❌ Erreur dans la comparaison : {e}")
+            similarity_score = 0
+        
+        # Mise à jour de la meilleure correspondance
+        if similarity_score > meilleure_similarite:
+            meilleure_similarite = similarity_score
+            meilleure_classe = i + 1  # Ou utiliser base_files[i] pour afficher le nom du fichier
+    
+    return meilleure_classe, meilleure_similarite
+
+# Phase de test
+print("\n--- Phase de Test ---")
+
+# Boucle directement sur les images prétraitées
+for img_array, filename in zip(test_images, test_image_files):
+    try:
+        img_array = np.expand_dims(img_array, axis=-1)  # Adapter la dimension si besoin
+        
+        # Trouver la meilleure correspondance
+        meilleure_classe, score = trouver_meilleure_correspondance(img_array, base_array)
+        print(f"✅ {filename} correspond le mieux à la classe {meilleure_classe} avec un score de {score:.4f}")
+
+    except Exception as e:
+        print(f"❌ Erreur lors du traitement de {filename} : {e}")
