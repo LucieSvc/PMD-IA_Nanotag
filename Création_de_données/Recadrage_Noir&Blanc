@@ -1,0 +1,88 @@
+######## Recadrage + Noir et Blanc ###############
+import cv2
+import os
+import numpy as np
+
+# Chemins des dossiers source et destination
+"""source_dir = r".\donnees\originales"
+destination_dir = r".\donnees\resized2\originales"""
+
+source_dir = r".\donnees\train"
+destination_dir = r".\donnees\resized2\train"
+
+"""source_dir = r".\donnees\test"
+destination_dir = r".\donnees\resized2\test"""
+
+# Dimensions pour le redimensionnement
+resize_width, resize_height = 480, 256
+
+# Parcourir tous les fichiers et dossiers
+for root, _, files in os.walk(source_dir):
+    for file in files:
+        if file.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff')):  # Filtrer les images
+            source_path = os.path.join(root, file)
+            
+            # Construire le chemin de destination en conservant la structure
+            relative_path = os.path.relpath(source_path, source_dir)
+            destination_path = os.path.join(destination_dir, relative_path)
+            destination_folder = os.path.dirname(destination_path)
+            os.makedirs(destination_folder, exist_ok=True)
+
+            # Charger l'image
+            image0 = cv2.imread(source_path)
+
+            if image0 is None:
+                print(f"Erreur : Impossible de charger {source_path}")
+                continue
+
+            # Redimensionner l'image à 480x256 pour la détection du cercle
+            image = cv2.resize(image0, (resize_width, resize_height))
+
+            # Convertir en niveaux de gris
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+            # Détecter les cercles avec HoughCircles
+            circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, dp=1.2, minDist=300, param1=100, param2=10, minRadius=100, maxRadius=200)
+
+            # Dimensions de l'image redimensionnée
+            height, width = gray.shape
+            center_x, center_y = width // 2, height // 2
+
+            # Sélectionner le cercle le plus proche du centre de l'image
+            best_circle = None
+            min_distance = float("inf")
+
+            if circles is not None:
+                for circle in circles[0, :]:
+                    x, y, r = circle
+                    distance_to_center = np.sqrt((x - center_x) ** 2 + (y - center_y) ** 2)
+                    if distance_to_center < min_distance:
+                        min_distance = distance_to_center
+                        best_circle = circle
+            
+            # Si un cercle a été détecté, ajuster ses coordonnées à l'image originale
+            if best_circle is not None:
+                x, y, r = best_circle  # Coordonnées du cercle sur l'image redimensionnée
+                
+                # Mise à l'échelle des coordonnées et du rayon
+                scale_x = image0.shape[1] / resize_width
+                scale_y = image0.shape[0] / resize_height
+                x = int(x * scale_x)
+                y = int(y * scale_y)
+                r = int(r * min(scale_x, scale_y))  # Adapter le rayon
+
+                # Définir la région de recadrage
+                x1, y1 = max(0, x - r), max(0, y - r)
+                x2, y2 = min(image0.shape[1], x + r), min(image0.shape[0], y + r)
+
+                # Recadrer l'image sur l'image originale
+                cropped_image = image0[y1:y2, x1:x2]
+
+                # Convertir en noir et blanc
+                cropped_gray = cv2.cvtColor(cropped_image, cv2.COLOR_BGR2GRAY)
+
+                # Enregistrer l'image recadrée
+                cv2.imwrite(destination_path, cropped_gray)
+                print(f"✅ Image sauvegardée : {destination_path}")
+
+print("🚀 Traitement terminé pour toutes les images !")
