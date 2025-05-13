@@ -1,0 +1,148 @@
+##### Creation images modifiées ########
+import os
+import cv2
+import numpy as np
+import random
+
+# Appliquer une rotation sans compléter l'image avec des bords artificiels
+def rotate_and_crop(image, angle_range=(-180,180)):  
+    # Générer un angle aléatoire
+    angle = random.uniform(*angle_range)
+    h, w = image.shape[:2]
+    center = (w // 2, h // 2)
+
+    # Calcul de la matrice de rotation
+    rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1)
+
+    # Appliquer la rotation avec warpAffine
+    rotated_image = cv2.warpAffine(image, rotation_matrix, (w, h), borderMode=cv2.BORDER_REPLICATE)
+
+    return rotated_image
+
+
+# Zoom avant uniquement
+def zoom_in(image, zoom_range=(1.0, 1.3)):
+    scale = random.uniform(*zoom_range)
+    h, w = image.shape[:2]
+    new_h, new_w = int(h / scale), int(w / scale)
+
+    start_x, start_y = (w - new_w) // 2, (h - new_h) // 2
+    cropped = image[start_y:start_y + new_h, start_x:start_x + new_w]
+    return cv2.resize(cropped, (w, h), interpolation=cv2.INTER_CUBIC)
+
+# Modifier la luminosité et le contraste
+def adjust_brightness_contrast(image, alpha_range=(0.9, 1.1), beta_range=(-20, 20)):
+    alpha = random.uniform(*alpha_range)
+    beta = random.randint(*beta_range)
+    return cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
+
+# Modifier légèrement les couleurs
+def modify_colors(image, hue_shift=(-10, 10), saturation_scale=(0.9, 1.1)):
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV).astype(np.float32)
+    hsv[:, :, 0] = (hsv[:, :, 0] + random.randint(*hue_shift)) % 180
+    hsv[:, :, 1] *= random.uniform(*saturation_scale)
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+# Appliquer un effet de lumière avec un dégradé doux
+def add_light_effect(image, intensity_range=(0.2, 0.4)):
+    h, w = image.shape[:2]
+    mask = np.ones((h, w), dtype=np.float32)
+
+    x, y = random.randint(w//4, 3*w//4), random.randint(h//4, 3*h//4)
+    radius = random.randint(h//3, h//2)
+
+    for i in range(h):
+        for j in range(w):
+            dist = np.sqrt((i - y) ** 2 + (j - x) ** 2)
+            mask[i, j] = min(1.0, 1.0 + random.uniform(*intensity_range) * (radius - dist) / radius)
+
+    mask = cv2.GaussianBlur(mask, (101, 101), 0)
+    mask = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
+
+    brightened_image = cv2.addWeighted(image.astype(np.float32), 1.0, mask * 255, 0.2, 0)
+    return np.clip(brightened_image, 0, 255).astype(np.uint8)
+
+# Ajouter une ombre douce avec un dégradé
+def add_shadow_effect(image, intensity_range=(-0.3, -0.1)):
+    h, w = image.shape[:2]
+    mask = np.ones((h, w), dtype=np.float32)
+
+    x, y = random.randint(w//4, 3*w//4), random.randint(h//4, 3*h//4)
+    radius = random.randint(h//3, h//2)
+
+    for i in range(h):
+        for j in range(w):
+            dist = np.sqrt((i - y) ** 2 + (j - x) ** 2)
+            mask[i, j] = max(0.7, 1.0 + random.uniform(*intensity_range) * (radius - dist) / radius)
+
+    mask = cv2.GaussianBlur(mask, (101, 101), 0)
+    mask = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
+
+    shadowed_image = (image * mask).astype(np.uint8)
+    return shadowed_image
+
+# Modifier l'inclinaison (effet de perspective)
+def skew_image(image, max_skew=0.05):
+    h, w = image.shape[:2]
+
+    src_pts = np.float32([[0, 0], [w, 0], [0, h], [w, h]])
+    dst_pts = src_pts + np.float32([
+        [random.uniform(-max_skew*w, max_skew*w), random.uniform(-max_skew*h, max_skew*h)],
+        [random.uniform(-max_skew*w, max_skew*w), random.uniform(-max_skew*h, max_skew*h)],
+        [random.uniform(-max_skew*w, max_skew*w), random.uniform(-max_skew*h, max_skew*h)],
+        [random.uniform(-max_skew*w, max_skew*w), random.uniform(-max_skew*h, max_skew*h)]
+    ])
+
+    matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
+    return cv2.warpPerspective(image, matrix, (w, h), borderMode=cv2.BORDER_REFLECT)
+
+# Appliquer plusieurs transformations aléatoires à une image
+def apply_random_transformations(image):
+    transformations = [
+        rotate_and_crop, zoom_in, adjust_brightness_contrast, modify_colors,
+        add_light_effect, add_shadow_effect, skew_image
+    ]
+    
+    num_modifications = random.randint(1, 4)  # Appliquer entre 1 et 4 les modifications
+    random.shuffle(transformations)
+    
+    for i in range(num_modifications):
+        image = transformations[i](image)
+    
+    return image
+
+# Génération des variations avec transformations multiples
+def generate_variations(input_dir, output_dir, num_variations):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    for filename in os.listdir(input_dir):
+        if filename.endswith(('.jpg', '.jpeg', '.png')):
+            img_path = os.path.join(input_dir, filename)
+            image = cv2.imread(img_path)
+
+            if image is None:
+                print(f"Erreur de lecture : {filename}")
+                continue
+
+            base_name, ext = os.path.splitext(filename)
+
+            transformations = [rotate, zoom_in, adjust_brightness_contrast, modify_colors, add_light_effect, add_shadow_effect, skew_image]
+            for i in range(7) : 
+                modified_image =  transformations[i](image)
+                output_path = os.path.join(output_dir, f"{base_name}_{transformations[i].__name__}{ext}")
+                cv2.imwrite(output_path, modified_image)
+                print(transformations[i])
+
+            for i in range(num_variations):
+                modified_image = apply_random_transformations(image)
+                output_path = os.path.join(output_dir, f"{base_name}_mod_{i}{ext}")
+                cv2.imwrite(output_path, modified_image)
+                print("ok2")
+
+            print(f"Variations générées pour {filename}")
+
+    print("Toutes les modifications sont terminées !")
+
+# Étape 1 : Générer des variations avec transformations multiples
+generate_variations('./modif/og', './modif', num_variations=2)
